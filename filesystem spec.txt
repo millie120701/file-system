@@ -1,0 +1,235 @@
+make a class which represents a filesystem
+
+The filesystem has a root folder. Inside the root folder can be files and other folders.
+
+A file is just a filename associated with the content (a string) and some metadata such as file size and last modified. Each folder should have metadata such as the number of files and folders beneath it in the tree, the total filesize of all files beneath it, as well as the most recent modification beneath it. 
+
+A file method, modify(), should allow the modification of any file's content. The filesystem should have a method, modify_file(), which accepts a filepath and a string and updates the file with the new string. 
+
+Making a change to any file or folder should update the metadata in all folders above it.
+
+
+content:
+
+when adding/renaming a folder/file, the content of the parent folders will be updated 
+
+adding/renaming a file:
+parent folders change content
+adding/renaming a folder:
+parent folder change content
+
+
+
+
+classes:
+	- FileNotFoundException
+
+	- Filesystem
+		properties:
+			- a root directory (of type Folder)
+
+		methods:
+			- modify_file(path, new_content) -> takes a filepath, e.g. "/a/b/c/d/e.txt", and calls the modify() method of that file with the new_content. If the file doesn't exist it should raise (e.g) FileNotFoundException.
+
+	- Folder
+		properties:
+			- name
+			- last_modified (based on the most recent file or folder modification within it)
+
+		methods:
+			- listdir() -> lists all the files and folders inside this folder
+			- add_file()
+			- add_folder()
+	- File
+		properties:
+			- content
+			- filename
+			- last_modified
+			- filesize
+
+		methods:
+			- get_full_path() -> returns the full filepath (recursive)
+			- modify(content)
+
+
+
+DATABASE:
+
+Files:
+- file name
+- last_modified
+- content (upon modification)
+- size 
+- filepath
+
+Folder:
+- name
+- last_modified
+- content (upon addition of files/folders)
+- size
+- filepath
+
+Adding a file:
+- new file to files
+- last modified changes for all folders containing the file
+- filepath for file is created
+
+Adding a folder:
+- new folder to folders
+- last modified changes for all folders containing the folder
+- file path for folder is created
+
+
+class FileSystemObject:
+    """
+    shared code between files and folders
+    """
+    def __init__(self,name):
+        self.name = name
+        self.last_modified = None
+        self.parent_folder = None
+
+    def update_last_modified(self, modified_time=None):
+            if modified_time is None:
+                modified_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+            self.last_modified = modified_time
+            if self.parent_folder is not None:
+                sql_update = "UPDATE Folders SET last_modified = %s WHERE name = %s"
+                val = (modified_time, self.parent_folder.name)
+                mycursor.execute(sql_update, val)
+                connection.commit()
+                self.parent_folder.update_last_modified(modified_time)
+
+
+    def get_full_path(self):
+        if self.parent_folder is None:
+            return "/" + self.name
+        else:
+            parent_path = self.parent_folder.get_full_path()
+            return parent_path + "/" + self.name
+        
+    def get_size(self):
+        pass # ABSTRACT METHOD - overridden on child classes
+
+    def rename(self, new_name):
+        self.name = new_name
+
+
+class Folder(FileSystemObject):
+    """
+    A container which contains a collection of files and folders.
+    """
+
+	WORKS WITH SQL - inc mod dates of parent folders
+
+    def add_file(self, name):
+        new_file = File(name)
+        new_file.parent_folder = self
+        self.content.append(new_file)
+        new_file.update_last_modified()
+        sql = "INSERT INTO Files (name, last_modified, filepath) VALUES (%s, %s, %s)"
+        val = (new_file.name, new_file.last_modified, new_file.get_full_path())
+        mycursor.execute(sql, val)
+        connection.commit()
+        return new_file
+	
+	WORKS WITH SQL - inc mod dates of parent folders
+
+    def add_folder(self, name):
+        new_folder = Folder(name)
+        new_folder.parent_folder = self
+        self.content.append(new_folder)
+        new_folder.update_last_modified()
+        #insert folder into database
+        sql_insert = "INSERT INTO Folders (name, last_modified, filepath) VALUES (%s, %s, %s)"
+        val = (new_folder.name, new_folder.last_modified, new_folder.get_full_path())
+        mycursor.execute(sql_insert, val)
+        connection.commit()
+        return new_folder
+
+    def get_size(self):
+        total_size = 0
+        for item in self.content:
+            total_size += item.get_size() # iterate across files and folders and call their common get_size method, which returns an int
+        return total_size
+
+	TODO WITH SQL
+
+    def modify_file(self, filepath, new_content):
+        #filepath = more_stuff/notes.txt    currently in stuff 
+        
+        current_path = filepath.split("/") #[more_stuff,notes.txt] 
+        if "/" in filepath: 
+            new_path = "/".join(current_path[1:])  #notes.txt
+            target_folder = current_path[0]  
+            for folder in self.content:
+                if type(folder) == Folder and folder.name == target_folder:
+                    folder.modify_file(new_path, new_content)
+        else:
+            for file in self.content:
+                if type(file) == File and file.name == current_path[0]:
+                    file.modify(new_content)
+    
+    def return_object(self, filepath):#e.g. stuff.return_object("more_stuff/things/notes.txt")
+        current_path = filepath.split("/")
+        if "/" in filepath:
+            new_path = "/".join(current_path[1:])  #things/notes.txt
+            target_folder = current_path[0]  
+            for folder in self.content:
+                if type(folder) == Folder and folder.name == target_folder:
+                   return folder.return_object(new_path)
+        else:
+            for item in self.content:
+                if item.name == current_path[0]:
+                    return item
+
+
+
+class File(FileSystemObject):
+    """
+    A piece of data (string) and associated metadata.
+    """
+    def __init__(self, name):
+        super().__init__(name)
+        self.content = ""
+        self.file_size = 0
+
+    def __repr__(self):
+        return self.name
+
+	TODO WITH SQL
+
+    def modify(self, content):
+        #replaces old content with new
+        self.content = content
+        last_modified = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        self.last_modified = last_modified
+        #get parent folders and update their time
+        if self.parent_folder != None:
+            self.parent_folder.update_last_modified(last_modified)
+
+    def get_size(self):
+        #length of content in the file
+        return len(self.content)
+
+
+class FileSystem:
+    def __init__(self):
+        self.root_folder = Folder("root")
+
+	TODO WITH SQL
+
+    def modify_file(self, filepath, new_content):
+        new_path = "/".join(filepath.split("/")[1:])
+        self.root_folder.modify_file(new_path, new_content)
+
+    def get_total_size(self):
+         return self.root_folder.get_size()
+
+    def get_root(self):
+        return self.root_folder
+    
+    def return_object(self, filepath):
+            new_path = "/".join(filepath.split("/")[1:])
+            return self.root_folder.return_object(new_path)
+      
